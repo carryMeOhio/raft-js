@@ -6,9 +6,9 @@ const config = {
   port: process.env.PORT || 3000,
 
   // Static list of peer URLs (excluding self)
-  peers: process.env.PEERS
-    ? process.env.PEERS.split(',')
-    : ['http://localhost:3001', 'http://localhost:3002'],
+  peers: (process.env.PEERS && process.env.PEERS.trim() !== '')
+    ? process.env.PEERS.split(',').filter(peer => peer.trim() !== '')
+    : [],
 
   // Randomized election timeout range in ms
   electionTimeoutRange: [300, 500],

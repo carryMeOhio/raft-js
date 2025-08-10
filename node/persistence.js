@@ -16,11 +16,13 @@ class PersistentStorage {
     }
   }
 
-  async saveState(currentTerm, votedFor) {
+  async saveState(currentTerm, votedFor, commitIndex, lastApplied) {
     await this.ensureDataDir();
     const state = {
       currentTerm: currentTerm || 0,
       votedFor: votedFor || null,
+      commitIndex: commitIndex || 0,
+      lastApplied: lastApplied || 0,
       timestamp: new Date().toISOString()
     };
     
@@ -38,12 +40,14 @@ class PersistentStorage {
       const state = JSON.parse(data);
       return {
         currentTerm: state.currentTerm || 0,
-        votedFor: state.votedFor || null
+        votedFor: state.votedFor || null,
+        commitIndex: state.commitIndex || 0,
+        lastApplied: state.lastApplied || 0
       };
     } catch (error) {
       if (error.code === 'ENOENT') {
         // File doesn't exist, return defaults
-        return { currentTerm: 0, votedFor: null };
+        return { currentTerm: 0, votedFor: null, commitIndex: 0, lastApplied: 0 };
       }
       console.error('Failed to load persistent state:', error);
       throw error;

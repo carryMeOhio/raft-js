@@ -60,7 +60,9 @@ function becomeLeader() {
   state.leaderId = state.id;
   // init leader state
   for (const peer of state.peers) {
-    state.nextIndex[peer] = lastLogIndex() + 1;
+    // Start from index 1 for new followers, or lastLogIndex + 1 for existing followers
+    // assume followers might be empty and start from 1
+    state.nextIndex[peer] = 1;
     state.matchIndex[peer] = 0;
   }
   
@@ -70,7 +72,8 @@ function becomeLeader() {
   logger.election('Became leader', {
     term: state.currentTerm,
     lastLogIndex: lastLogIndex(),
-    peerCount: state.peers.length
+    peerCount: state.peers.length,
+    nextIndex: state.nextIndex
   });
 }
 
@@ -99,6 +102,18 @@ async function sendAppendEntries(peer, entries=[]) {
   const prevLogTerm = prevLogIndex > 0 ? (logAt(prevLogIndex)?.term || 0) : 0;
   const payloadEntries = entries.length ? entries : state.log.slice(nextIdx - 1);
 
+  const logger = getLogger();
+  logger.info('Sending AppendEntries', { 
+    peer, 
+    nextIdx, 
+    prevLogIndex, 
+    prevLogTerm, 
+    entriesCount: payloadEntries.length,
+    logLength: state.log.length,
+    firstEntry: payloadEntries[0],
+    lastEntry: payloadEntries[payloadEntries.length - 1]
+  });
+
   const body = {
     term: state.currentTerm,
     leaderId: state.id,
@@ -111,29 +126,57 @@ async function sendAppendEntries(peer, entries=[]) {
 }
 
 async function replicateToAll() {
+  const logger = getLogger();
   if (state.role !== ROLE.LEADER) return;
+  
+  logger.info('Starting replication to all peers', { 
+    peerCount: state.peers.length, 
+    peers: state.peers,
+    lastLogIndex: lastLogIndex()
+  });
+  
   await Promise.all(state.peers.map(async (peer) => {
-    const res = await sendAppendEntries(peer);
-    if (!res.ok) return;
-    const { success, term, conflictIndex } = res.data || {};
-    if (term && term > state.currentTerm) {
-      becomeFollower(term, null); return;
-    }
-    if (success) {
-      // advance next/match indexes
-      state.matchIndex[peer] = lastLogIndex();
-      state.nextIndex[peer] = lastLogIndex() + 1;
-    } else if (conflictIndex) {
-      // backoff nextIndex and retry next heartbeat
-      state.nextIndex[peer] = Math.max(1, conflictIndex);
+    try {
+      const res = await sendAppendEntries(peer);
+      logger.info('Replication response', { peer, res });
+      if (!res.ok) {
+        logger.error('Replication failed - response not ok', { peer, res });
+        return;
+      }
+      const { success, term, conflictIndex } = res.data || {};
+      if (term && term > state.currentTerm) {
+        logger.info('Higher term received, becoming follower', { term, currentTerm: state.currentTerm });
+        becomeFollower(term, null); 
+        return;
+      }
+      if (success) {
+        // advance next/match indexes
+        state.matchIndex[peer] = lastLogIndex();
+        state.nextIndex[peer] = lastLogIndex() + 1;
+        logger.info('Replication successful', { peer, matchIndex: state.matchIndex[peer], nextIndex: state.nextIndex[peer] });
+      } else if (conflictIndex) {
+        // backoff nextIndex and retry next heartbeat
+        state.nextIndex[peer] = Math.max(1, conflictIndex);
+        logger.info('Replication conflict, backing off', { peer, conflictIndex, newNextIndex: state.nextIndex[peer] });
+      }
+    } catch (error) {
+      logger.error('Replication error', { peer, error: error.message });
     }
   }));
+  
   // Update commitIndex (majority rule)
   const Nmax = lastLogIndex();
   for (let N = Nmax; N > state.commitIndex; N--) {
     const count = 1 + state.peers.filter(p => (state.matchIndex[p] || 0) >= N).length; // leader counts itself
     if (count > Math.floor((state.peers.length + 1) / 2) && (logAt(N)?.term === state.currentTerm)) {
-      state.commitIndex = N; applyCommitted(); break;
+      state.commitIndex = N; 
+      applyCommitted(); 
+      logger.info('Commit index advanced', { newCommitIndex: state.commitIndex });
+      // Persist the updated commit index
+      persistState().catch(error => {
+        logger.error('Failed to persist state after commit index update', { error: error.message });
+      });
+      break;
     }
   }
 }
@@ -149,5 +192,5 @@ function clearHeartbeat() { if (hbHandle) { clearInterval(hbHandle); hbHandle = 
 module.exports.raft = {
   becomeFollower, becomeCandidate, becomeLeader,
   sendRequestVote, sendAppendEntries, replicateToAll,
-  startHeartbeat, clearHeartbeat
+  startHeartbeat, clearHeartbeat, applyCommitted
 };

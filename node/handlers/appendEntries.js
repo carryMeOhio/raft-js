@@ -1,4 +1,4 @@
-const { state: S, lastLogIndex: LLI } = require('../state');
+const { state: S, lastLogIndex: LLI, persistState } = require('../state');
 const { raft: R } = require('../raft');
 const { timer } = require('../timer');
 const { RaftValidators } = require('../validation');
@@ -54,6 +54,16 @@ function appendEntries(req, res) {
   // Advance commit index
   if (leaderCommit > S.commitIndex) {
     S.commitIndex = Math.min(leaderCommit, LLI());
+    // Persist the updated commit index
+    persistState().catch(error => {
+      logger.error('Failed to persist state after commit index update', { error: error.message });
+    });
+    // Apply committed entries to state machine
+    try {
+      R.applyCommitted();
+    } catch (error) {
+      logger.error('Failed to apply committed entries', { error: error.message });
+    }
   }
 
   const response = { term: S.currentTerm, success: true, lastIndex: LLI() };

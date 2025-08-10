@@ -53,11 +53,13 @@ async function initializePersistence(nodeId) {
     const persistentState = await state.storage.loadState();
     state.currentTerm = persistentState.currentTerm;
     state.votedFor = persistentState.votedFor;
+    state.commitIndex = persistentState.commitIndex;
+    state.lastApplied = persistentState.lastApplied;
     
     // Load log
     state.log = await state.storage.loadLog();
     
-    console.log(`Loaded persistent state: term=${state.currentTerm}, votedFor=${state.votedFor}, logEntries=${state.log.length}`);
+    console.log(`Loaded persistent state: term=${state.currentTerm}, votedFor=${state.votedFor}, commitIndex=${state.commitIndex}, lastApplied=${state.lastApplied}, logEntries=${state.log.length}`);
   } catch (error) {
     console.error('Failed to initialize persistence:', error);
     throw error;
@@ -67,7 +69,7 @@ async function initializePersistence(nodeId) {
 async function persistState() {
   if (state.storage) {
     try {
-      await state.storage.saveState(state.currentTerm, state.votedFor);
+      await state.storage.saveState(state.currentTerm, state.votedFor, state.commitIndex, state.lastApplied);
     } catch (error) {
       console.error('Failed to persist state:', error);
     }
